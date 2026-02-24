@@ -85,15 +85,30 @@ internal_pi2 = internal_pi * 2;
 // Internal values - You might want to play with these if you are using a proportional font
 internal_space_fudge = 0.80; // Fudge for working out lengths (widths) of strings
 
+// Do we have textmetrics available
+internal_tm_avail = version()[0] > 2021;
+
+echo(str("Using major version ", version()[0]));
+if (internal_tm_avail) {
+    echo("Using textmetrics");
+}
+
 debug = true;
 
 // ---- Helper Functions ----
+// Simple substr implementation
+function substr(string, f, l) = (l > 0) ? chr([for(i = [f:f+l-1]) ord(string[i])]) : "";
+
 // String width (length from left to right or RTL) in OpenSCAD units
 // NOTE: These are innacurate because we don't know the real spacing of the chars and so have to approximate
 // They work for monospaced (fixed-width) fonts well
 function width_of_text_char(size, spacing) = size * internal_space_fudge * spacing;
 function width_of_text_string_num_length(length, size, spacing) = width_of_text_char(size, spacing) * length;
 function width_of_text_string(t, size, spacing) = width_of_text_string_num_length(len(t), size, spacing);
+
+function tm_width_of_text_char(c, size, font, spacing) = textmetrics(c, size=size, font=font).advance[0] * spacing;
+function tm_width_of_partial_text_string(t, sublength, size, font, spacing) = textmetrics(substr(t, 0, sublength), size=size, font=font).advance[0] * spacing;
+function tm_width_of_text_string(t, size, font, spacing) = textmetrics(t, size=size, font=font).advance[0] * spacing;
 
 function cylinder_center_adjusted_top(height, center) = (center == true) ? height / 2 : height;
 function cylinder_center_adjusted_bottom(height, center) = (center == true) ? height / 2 : 0;
@@ -102,13 +117,27 @@ function cylinder_center_adjusted_bottom(height, center) = (center == true) ? he
 //Angle that measures width of letters on perimeter of a circle (and sphere and cylinder)
 function rotation_for_character(size, spacing, r, rotate = 0) = (width_of_text_char( size, spacing ) / (internal_pi2 * r)) * 360 * (1 - abs(rotate) / 90);
 
+function tm_rotation_for_partial_string(t, pos, size, font, spacing, r, rotate = 0) = (tm_width_of_partial_text_string(t, pos, size, font, spacing) / (internal_pi2 * r)) * 360 * (1 - abs(rotate) / 90);
+
+// Angle to the visual center of character l: advance of chars 0..l-1 plus half advance of char l.
+// Using this (instead of just advance(0..l-1)) with halign="center" renders each character flush
+// against its neighbours regardless of proportional width, just as in normal left-aligned text.
+function tm_rotation_to_char_center(t, l, size, font, spacing, r) =
+    (tm_width_of_partial_text_string(t, l, size, font, spacing) + tm_width_of_text_char(t[l], size, font, spacing) / 2) / (internal_pi2 * r) * 360;
 
 //Rotate 1/2 width of text if centering    
 //One less -- if we have a single char we are already centred..
 function rotation_for_center_text_string(t, size, spacing, r, rotate, center) = (center) ? (width_of_text_string_num_length(len(t) - 1, size, spacing) / 2 / (internal_pi2 * r) * 360) : 0;
 
+// With center-based positioning (tm_rotation_to_char_center), the string spans
+// [advance(0)/2 .. advance(0..n-1) - advance(n-1)/2], so advance(0..n-1)/2 is the best
+// simple approximation for the visual midpoint.
+function tm_rotation_for_center_text_string(t, size, font, spacing, r, rotate, center) = (center) ? (tm_width_of_text_string(t, size, font, spacing) / 2 / (internal_pi2 * r) * 360) : 0;
+
 //Rotate according to rotate and if centred text also 1/2 width of text
 function rotation_for_center_text_string_and_rotate(t, size, spacing,r,rotate,center) = ((center) ? (width_of_text_string(t, size, spacing) / 2 / (internal_pi2 * r) * 360) : 1) * (1 - abs(rotate) / 90);
+
+function tm_rotation_for_center_text_string_and_rotate(t, size, font, spacing, r, rotate, center) = ((center) ? (tm_width_of_text_string(t, size, font, spacing) / 2 / (internal_pi2 * r) * 360) : 1) * (1 - abs(rotate) / 90);
 
 
 //---- Text on Object Functions ----
@@ -185,7 +214,9 @@ module text_on_cylinder(t = default_t,
         }
         //Work on the side
         locn_offset_vec = (cylinder_center == true) ? [0, 0, 0] : [0, 0, h / 2]; 
-        rotate(-rtl_sign * rotation_for_center_text_string_and_rotate(t, size, spacing, r, rotate, center), [0, 0, 1])
+        rotate(-rtl_sign * (internal_tm_avail
+                ? tm_rotation_for_center_text_string_and_rotate(t, size, font, spacing, r, rotate, center)
+                : rotation_for_center_text_string_and_rotate(t, size, spacing, r, rotate, center)), [0, 0, 1])
         translate(locn_vec + locn_offset_vec)
         __internal_text_on_cylinder_side(t,
                 locn_vec,
@@ -247,13 +278,16 @@ module text_on_circle(t = default_t,
     rtl_sign = (direction == "rtl") ? -1 : 1;
     ttb_btt_inaction = (direction == "ttb" || direction == "btt") ? 0 : 1;
     rotate_z_outer = -rotate + ccw_sign * eastwest;
-    rotate_z_inner = -rtl_sign * ccw_sign * ttb_btt_inaction * rotation_for_center_text_string(t, size, spacing, r-middle, rotate, center);
+    rotate_z_inner = -rtl_sign * ccw_sign * ttb_btt_inaction * (internal_tm_avail ? tm_rotation_for_center_text_string(t, size, font, spacing, r-middle, rotate, center)
+										  : rotation_for_center_text_string(t, size, spacing, r-middle, rotate, center));
     rotate(rotate_z_outer, [0, 0, 1] )
     rotate(rotate_z_inner, [0, 0, 1] )
     translate(locn_vec)
     for(l = [0 : len(t) - 1]) {
         //TTB/BTT means no per letter rotation
-        rotate_z_inner2 = -ccw_sign * 90 + ttb_btt_inaction * rtl_sign * ccw_sign * l * rotation_for_character(size, spacing, r - middle, rotate = 0);   //Bottom out=-270+r
+        rotate_z_inner2 = -ccw_sign * 90 + (
+		internal_tm_avail ? ttb_btt_inaction * rtl_sign * ccw_sign * tm_rotation_to_char_center(t, l, size, font, spacing, r - middle)
+				  : ttb_btt_inaction * rtl_sign * ccw_sign * l * rotation_for_character(size, spacing, r - middle, rotate = 0));   //Bottom out=-270+r
         //TTB means we go toward center, BTT means away
         vert_x_offset = (direction == "ttb" || direction == "btt") ? (l * size * ((direction == "btt") ? -1 : 1)) : 0;
         rotate(rotate_z_inner2, [0, 0, 1])
@@ -287,6 +321,8 @@ module __internal_text_on_cylinder_side(t = default_t,
                       r2,
                       h,
                       cylinder_center,
+                      updown = default_cylinder_updown,
+                      eastwest = default_circle_eastwest,
                       
                       //All objects
                       extrusion_height = default_extrusion_height,
@@ -353,20 +389,29 @@ module __internal_text_on_cylinder_side(t = default_t,
     rotate(eastwest, [0, 0, 1])
     for(l = [0 : len(t) - 1]) {
         //TODO: TTB and BTT need to have a different concept of path/length than this for RTL/LTR
+        length_to_center_of_char = (internal_tm_avail ? tm_width_of_partial_text_string(t, l, size, font, spacing) + tm_width_of_text_char(t[l], size, font, spacing) / 2
            //width_of_... is half a char too long -- add 0.5 (counting from zero)
-        length_to_center_of_char = width_of_text_string_num_length(l + 0.5, size, spacing);
+	                                              : width_of_text_string_num_length(l + 0.5, size, spacing));
         radius_here = calc_radius_at_length(rr1, rr2, h, length_to_center_of_char, rotate, updown);
         //Rotating into position and tangentially to surface -- Don't rotate per character for ttb/btt
         //-90 is to get centering at origin
-        rotate_z_inner = -90 + rtl_sign * rotation_for_character(size, spacing, radius_here, rotate) * ((ddirection == "ttb" || ddirection== "btt") ?  0 : l);
+        rotate_z_inner = -90 + rtl_sign * ((ddirection == "ttb" || ddirection == "btt") ? 0
+            : (internal_tm_avail
+                ? (tm_width_of_partial_text_string(t, l, size, font, spacing) + tm_width_of_text_char(t[l], size, font, spacing) / 2) / (internal_pi2 * radius_here) * 360
+                : rotation_for_character(size, spacing, radius_here, rotate) * l));
         rotate(rotate_z_inner, [0, 0, 1]) {
             //Positioning - based on (somewhat innacurate) string length
             //Offset per character to go up/down the side in ttb/btt -- TTB down, BTT up
             vert_z_char_offset = (ddirection == "ttb" || ddirection == "btt") ?  (l * size * ((ddirection == "ttb") ? -1 : 1 )) :  0 ;
             //Only if RTL/LTR and if center -- center the text (starts off in a more visually appealing location)
-            vert_z_half_text_offset_tmp = (len(t) -1) / 2 * (rotate / 90 * wid);
+            vert_z_half_text_offset_tmp = (internal_tm_avail
+                ? tm_width_of_text_string(t, size, font, spacing) / 2
+                : (len(t) - 1) / 2 * wid) * (rotate / 90);
             vert_z_half_text_offset = ((ddirection == "ttb" || ddirection == "btt") || (ccenter == false)) ? 0 : vert_z_half_text_offset_tmp;
-            translate([ radius_here , 0, vert_z_char_offset - l * (rotate / 90 * wid) + vert_z_half_text_offset])
+            vert_z_char_spiral = internal_tm_avail
+                ? (tm_width_of_partial_text_string(t, l, size, font, spacing) + tm_width_of_text_char(t[l], size, font, spacing) / 2) * (rotate / 90)
+                : l * (rotate / 90 * wid);
+            translate([ radius_here , 0, vert_z_char_offset - vert_z_char_spiral + vert_z_half_text_offset])
 
             //Flip to tangent on the sloping side (without respecting rotation impact on the tangent -- rotate seems a little off. TODO: Investigate).
             rotate(atan((rr2 - rr1) /h), [0, 1, 0])
@@ -439,7 +484,9 @@ module text_on_sphere(t = default_t,
     rotate(spin, [0, 1, 0]) {
         //This tries to center the text (for RTL text).
         ttb_btt_inaction = (direction == "ttb" || direction == "btt") ? 0 : 1;
-        rotate(-rtl_sign * ttb_btt_inaction * rotation_for_center_text_string(t, size, spacing, rr, rotate, center), [0, 0, 1]) {
+        rotate(-rtl_sign * ttb_btt_inaction * (internal_tm_avail
+                ? tm_rotation_for_center_text_string(t, size, font, spacing, rr, rotate, center)
+                : rotation_for_center_text_string(t, size, spacing, rr, rotate, center)), [0, 0, 1]) {
             translate(locn_vec)
             if (rounded == false) {
                 __internal_text_on_sphere_helper(t = t,
@@ -493,6 +540,7 @@ module __internal_text_on_sphere_helper(t = default_t,
                       //All objects
                       extrusion_height = default_extrusion_height,
                       center = default_center,
+                      rotate = default_rotate,
                       scale = default_scale,
                       //All objects -- arguments as for text()
                       font = undef,
@@ -509,7 +557,9 @@ module __internal_text_on_sphere_helper(t = default_t,
     ttb_btt_action = (direction == "ttb" || direction == "btt") ? 1 : 0;
     
     for(l = [0 : len(t) - 1]) {
-        rotate_z_inner = -90 + rtl_sign * ttb_btt_inaction * l * rotation_for_character(size, spacing, r, 0);
+        rotate_z_inner = -90 + rtl_sign * ttb_btt_inaction * (internal_tm_avail
+            ? tm_rotation_to_char_center(t, l, size, font, spacing, r)
+            : l * rotation_for_character(size, spacing, r, 0));
         translate_sign = (direction == "ttb" || direction == "btt") ? ((direction == "btt") ? 1 : -1)  : 0 ;
         //translate_effect = (direction=="ttb" || direction=="btt") ? 1  :  0 ;
         //Translate letter to be located on the sphere in up/down direction when we are doing TTB and BTT
