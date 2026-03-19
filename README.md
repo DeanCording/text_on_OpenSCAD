@@ -4,7 +4,7 @@ text_on_OpenSCAD
 A library for putting customised "text on" 3D shapes in OpenSCAD with changeable fonts, languages/scripts, text direction.
 
 Only works with OpenSCAD v 2014.xx and later -- where text() module is added and unicode text is supported. The text module is still an experimental feature in newer releases and must be enabled at run time (--enable=text).
-Work with proportional fonts currently requires a deveopment release of OpenSCAD 2022.x.x or later because that's when the `textmetrics()` call was added.  My testing has been done with OpenSCAD 2026.02.04.
+Work with proportional fonts currently requires a [deveopment release](https://openscad.org/downloads.html#snapshots) of OpenSCAD 2022.x.x or later because that's when the `textmetrics()` call was added.  My testing has been done with OpenSCAD 2026.02.04 on MacOS 26.x on an Apple silicon chip.
 
 This is a rewrite and extension of the great write.scad (v3 from http://www.thingiverse.com/thing:16193) to use the new OpenSCAD internal text() primitive.
 * All credit to Harlan Martin (harlan@sutlog.com) for his great effort on the original.
